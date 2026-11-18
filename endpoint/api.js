@@ -104,7 +104,7 @@ async function createQrisComposite({
   const baseBuffer = await sharp(backgroundBuffer)
     .rotate()
     .resize({
-      width: 1200,
+      width: 1500,
       fit: "inside",
       withoutEnlargement: false,
     })
