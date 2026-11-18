@@ -353,7 +353,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
   }
 });
 
-// ================= CEK STATUS DEPOSIT =================
+// ================= CEK STATUS DEPOSIT (MYQRIS) =================
 router.post("/deposit/status", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -426,7 +426,15 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
       });
     }
 
-    const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";
+    const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+    const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+    if (!MYQRIS_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: "API Key MyQris belum dikonfigurasi di server."
+      });
+    }
 
     const fetchWithTimeout = async (url, options = {}, timeout = 5000) => {
       const controller = new AbortController();
@@ -442,28 +450,31 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     };
 
     let providerTrx = null;
-
-    // ================= CEK VIA POST /api/v1/payments/{paymentId}/status =================
     const targetPaymentId = localData.provider_id || id;
 
+    // ================= CEK VIA POST /api/deposit/status (MyQris) =================
     if (targetPaymentId) {
-      const detailUrl = `${XS_BASE}/api/v1/payments/${encodeURIComponent(targetPaymentId)}/status`;
+      const detailUrl = `${MYQRIS_BASE}/api/deposit/status`;
       
       const detailRes = await fetchWithTimeout(detailUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
           "Accept": "application/json",
+          "x-api-key": MYQRIS_API_KEY,
           "User-Agent": "Mozilla/5.0"
         },
-        body: JSON.stringify({}) // Sesuai dokumentasi curl -d '{}'
+        body: JSON.stringify({
+          id: targetPaymentId // Sesuai dokumentasi curl MyQris: parameter 'id'
+        })
       });
 
       if (detailRes && detailRes.ok) {
         try {
           const detailData = await detailRes.json();
-          if (detailData?.success && detailData?.data) {
-            providerTrx = detailData.data;
+          // MyQris mengembalikan objek status langsung atau di dalam key
+          if (detailData) {
+            providerTrx = detailData.deposit || detailData;
           }
         } catch (e) {}
       }
@@ -472,19 +483,19 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     // ================= PROSES STATUS PROVIDER =================
     if (providerTrx) {
       let rawProviderStatus = String(providerTrx.status || localStatus).toLowerCase();
-      // Mapping "paid" dari API ke status "success" internal
-      let providerStatus = rawProviderStatus === "paid" ? "success" : rawProviderStatus;
+      // Mapping "paid" atau "success" dari API ke status internal "success"
+      let providerStatus = (rawProviderStatus === "paid" || rawProviderStatus === "success") ? "success" : rawProviderStatus;
 
-      const pId = String(providerTrx.id || targetPaymentId);
-      const pRef = String(providerTrx.transactionId || providerTrx.reference_id || pId);
+      const pId = String(providerTrx.id || providerTrx.deposit_id || targetPaymentId);
+      const pRef = String(providerTrx.trx_id || pId);
       
-      // Parsing timestamp MS (epoch) dari response API status
-      let pPaidAt = providerTrx.paidAt || providerTrx.createdAt || null;
+      // Parsing timestamp dari response API status MyQris
+      let pPaidAt = providerTrx.settlement_time || providerTrx.created_at || null;
       if (typeof pPaidAt === 'number') {
         pPaidAt = new Date(pPaidAt).toISOString();
       }
 
-      let pExpiresAt = providerTrx.expiresAt || null;
+      let pExpiresAt = providerTrx.expired_at || null;
       if (typeof pExpiresAt === 'number') {
         pExpiresAt = new Date(pExpiresAt).toISOString();
       }
@@ -593,7 +604,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Error Status Check XS-Pedia:", error);
+    console.error("Error Status Check MyQris:", error);
     return res.status(500).json({
       success: false,
       message: "Gagal memuat detail terbaru."
