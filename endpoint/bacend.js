@@ -88,7 +88,8 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 10) {
+    // Diubah menjadi minimal Rp100 sesuai pesan error pada tampilan
+    if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 100) {
       return res.status(400).json({
         success: false,
         message: "Minimal deposit Rp100"
@@ -124,7 +125,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           "User-Agent": "Mozilla/5.0"
         },
         body: JSON.stringify({
-          nominal: totalBayar // Menyesuaikan field body create MyQris
+          nominal: totalBayar
         })
       });
     } catch (fetchError) {
@@ -157,11 +158,10 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
 
     // Mapping sesuai struktur response API MyQris
     const paymentData = result.deposit;
-    const rawQrImage = paymentData.qris_url || ""; // Gambar QR / URL halaman QR
+    const rawQrImage = paymentData.qris_url || ""; 
     const qrisString = paymentData.qr_string || "";
     const providerPaymentId = paymentData.deposit_id || paymentData.trx_id;
     
-    // Parsing timestamp dari response API MyQris (biasanya epoch/number)
     const rawCreatedAt = paymentData.created_at;
     const providerCreatedAt = rawCreatedAt 
       ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
@@ -180,7 +180,9 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     }
 
     // ================= ID TRANSAKSI MURNI DARI PAYMENT ID =================
-    const localTrxId = providerPaymentId; // e.g. "D001"
+    const localTrxId = providerPaymentId; 
+    
+    // Background URL baru sesuai permintaan Anda
     const customBgUrl = "https://files.catbox.moe/mbhgwo.png";
 
     // ================= SIMPAN HISTORY =================
@@ -201,7 +203,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       provider_reference_id: providerPaymentId,
       provider_created_at: providerCreatedAt,
       provider_expires_at: providerExpiresAt,
-      expires_in_ms: 15 * 60 * 1000, // Default 15 menit
+      expires_in_ms: 15 * 60 * 1000, 
       provider_status: paymentData.status || "pending",
       provider_time: null,
       qris_string: qrisString,
@@ -254,7 +256,6 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           return;
         }
 
-        // Live status-check via POST ke /api/deposit/status dengan body menyertakan deposit_id / ref
         const detailUrl = `${MYQRIS_BASE}/api/deposit/status`;
         const checkRes = await fetch(detailUrl, {
           method: "POST",
@@ -265,14 +266,13 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
             "User-Agent": "Mozilla/5.0" 
           },
           body: JSON.stringify({
-            deposit_id: localTrxId // Menyesuaikan parameter cek status MyQris
+            deposit_id: localTrxId
           })
         });
 
         if (!checkRes.ok) return;
 
         const checkData = await checkRes.json();
-        // Berdasarkan dokumentasi, struktur status mengembalikan object langsung atau di dalam key tertentu
         const providerTrx = checkData; 
         const rawProviderStatus = String(providerTrx.status || "").toLowerCase();
         const providerStatus = rawProviderStatus === "paid" || rawProviderStatus === "success" ? "success" : rawProviderStatus;
@@ -340,7 +340,6 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       }
     }, 10000);
 
-    // Otomatis menghentikan polling setelah 15 menit
     setTimeout(() => clearInterval(intervalId), 15 * 60 * 1000 + 60000);
 
   } catch (err) {
@@ -353,6 +352,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     }
   }
 });
+
 
 
 // ================= CEK STATUS DEPOSIT =================
