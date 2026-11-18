@@ -88,7 +88,7 @@ async function createQrisComposite({
   } else if (qrisString) {
     qrBuffer = await QRCode.toBuffer(qrisString, {
       type: "png",
-      width: 1200,
+      width: 1500,
       margin: 4,
       errorCorrectionLevel: "H",
       color: {
@@ -147,8 +147,8 @@ async function createQrisComposite({
 
   const qrMeta = await sharp(qrPrepared).metadata();
 
-  const qrWidth = qrMeta.width || qrSize + 110;
-  const qrHeight = qrMeta.height || qrSize + 110;
+  const qrWidth = qrMeta.width || qrSize + 150;
+  const qrHeight = qrMeta.height || qrSize + 150;
 
   // Posisi di tengah bagian bawah, seluruh QR harus tetap terlihat.
   const left = Math.max(
