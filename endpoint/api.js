@@ -114,13 +114,13 @@ async function createQrisComposite({
 
   const meta = await sharp(baseBuffer).metadata();
 
-  const width = meta.width || 1500;
-  const height = meta.height || 1500;
+  const width = meta.width || 1200;
+  const height = meta.height || 1200;
 
   // QR dibuat cukup besar agar mudah dideteksi kamera.
   const qrSize = Math.min(
     900,
-    Math.floor(width * 1.50),
+    Math.floor(width * 0.99),
     Math.floor(height * 0.20)
   );
 
@@ -160,7 +160,7 @@ async function createQrisComposite({
     0,
     Math.min(
       height - qrHeight - 30,
-      Math.floor(height * 0.41)
+      Math.floor(height * 0.45)
     )
   );
 
