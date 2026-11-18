@@ -121,7 +121,7 @@ async function createQrisComposite({
   const qrSize = Math.min(
     900,
     Math.floor(width * 1.50),
-    Math.floor(height * 0.22)
+    Math.floor(height * 0.20)
   );
 
   // jPanel putih + quiet-zone besar.
@@ -136,10 +136,10 @@ async function createQrisComposite({
       background: "#FFFFFF",
     })
     .extend({
-      top: 30,
-      bottom: 30,
-      left: 30,
-      right: 30,
+      top: 25,
+      bottom: 25,
+      left: 25,
+      right: 25,
       background: "#FFFFFF",
     })
     .png()
