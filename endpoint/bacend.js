@@ -181,7 +181,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
 
     // ================= ID TRANSAKSI MURNI DARI PAYMENT ID =================
     const localTrxId = providerPaymentId; // e.g. "D001"
-    const customBgUrl = "https://files.catbox.moe/sh2bcj.png";
+    const customBgUrl = "https://files.catbox.moe/mbhgwo.png";
 
     // ================= SIMPAN HISTORY =================
     const historyDataForDb = {
@@ -414,7 +414,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           status: localStatus,
           metode: localData.metode || "QRIS",
           qr_image: localData.qr_image || null,
-          bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+          bg_image: localData.bg_image || "https://files.catbox.moe/mbhgwo.png",
           qris_string: localData.qris_string || "",
           created_at: localData.created_at || null,
           expires_at: localData.provider_expires_at || null,
@@ -581,7 +581,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
         status: localStatus,
         metode: localData.metode || "QRIS",
         qr_image: localData.qr_image || null,
-        bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+        bg_image: localData.bg_image || "https://files.catbox.moe/mbhgwo.png",
         qris_string: localData.qris_string || "",
         created_at: localData.created_at || null,
         expires_at: localData.provider_expires_at || null,
