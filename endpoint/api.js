@@ -33,7 +33,7 @@ const cloudscraperHeaders = {
 // HELPER QRIS COMPOSITE (BACKGROUND + QR)
 // ==========================================
 const QR_OUTPUT_DIR = path.join(__dirname, "../media/generated-qris");
-const DEFAULT_BG_URL = "https://files.catbox.moe/ix1tqb.png";
+const DEFAULT_BG_URL = "https://files.catbox.moe/9drm74.jpg";
 const DEFAULT_BG_PATH = path.join(__dirname, "../media/bg.jpg");
 
 function getFeePercentForRole(role) {
