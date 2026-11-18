@@ -611,16 +611,19 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
     });
   }
 });
-
-// ================= CANCEL DEPOSIT (INTERNAL ONLY) =================
+// ================= CANCEL DEPOSIT (MYQRIS) =================
 router.post("/deposit/cancel", requireLogin, async (req, res) => {
-  const user = await User.findById(req.session.userId);
-  if (!user) return res.status(401).json({ success: false, message: "Sesi tidak valid." });
-
-  const { id } = req.body;
-  if (!id) return res.status(400).json({ success: false, message: "ID diperlukan." });
-
   try {
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      return res.status(401).json({ success: false, message: "Sesi tidak valid." });
+    }
+
+    const { id } = req.body;
+    if (!id) {
+      return res.status(400).json({ success: false, message: "ID diperlukan." });
+    }
+
     const userHistory = await User.findOne(
       { _id: user._id, "historyDeposit.id": id },
       { "historyDeposit.$": 1 }
@@ -639,14 +642,64 @@ router.post("/deposit/cancel", requireLogin, async (req, res) => {
       });
     }
 
-    await editHistoryDeposit(user._id, id, "cancel");
+    const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+    const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+    if (!MYQRIS_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: "API Key MyQris belum dikonfigurasi di server."
+      });
+    }
+
+    const targetPaymentId = currentData.provider_id || id;
+    const cancelUrl = `${MYQRIS_BASE}/api/cancel`;
+
+    let response;
+    try {
+      response = await fetch(cancelUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Accept": "application/json",
+          "x-api-key": MYQRIS_API_KEY,
+          "User-Agent": "Mozilla/5.0"
+        },
+        body: JSON.stringify({
+          trx_id: targetPaymentId // Sesuai dokumentasi MyQris: parameter 'trx_id' wajib
+        })
+      });
+    } catch (fetchError) {
+      console.error("MyQris Cancel Fetch Error:", fetchError);
+      return res.status(502).json({
+        success: false,
+        message: "Koneksi server ke MyQris gagal."
+      });
+    }
+
+    const responseText = await response.text();
+    let result;
+
+    try {
+      result = JSON.parse(responseText);
+    } catch (jsonError) {
+      console.error("MyQris Cancel Invalid Response:", responseText.slice(0, 500));
+      return res.status(502).json({
+        success: false,
+        message: "MyQris mengembalikan response yang bukan JSON."
+      });
+    }
+
+    // Ubah status di database lokal via helper / update
+    await editHistoryDeposit(user._id, id, "cancelled");
 
     return res.status(200).json({
       success: true,
-      message: "Deposit berhasil dibatalkan.",
+      message: result?.message || "Deposit berhasil dibatalkan.",
       data: {
         id: id,
-        status: "cancel"
+        trx_id: id,
+        status: "cancelled"
       }
     });
 
