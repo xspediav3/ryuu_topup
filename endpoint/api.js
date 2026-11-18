@@ -119,7 +119,7 @@ async function createQrisComposite({
 
   // QR dibuat cukup besar agar mudah dideteksi kamera.
   const qrSize = Math.min(
-    700,
+    500,
     Math.floor(width * 0.95),
     Math.floor(height * 0.20)
   );
