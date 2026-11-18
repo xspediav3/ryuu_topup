@@ -110,7 +110,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     const totalBayar = parsedNominal + kodeUnik;
     const saldoDiterima = parsedNominal;
 
-    // ================= CREATE MYQRIS =================
+    // ================= CREATE MYQRIS (Sesuai Dokumentasi CURL) =================
     const createUrl = `${MYQRIS_BASE}/api/deposit/create`;
 
     let response;
@@ -124,7 +124,8 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           "User-Agent": "Mozilla/5.0"
         },
         body: JSON.stringify({
-          nominal: totalBayar
+          amount: totalBayar,       // MyQris menggunakan 'amount'
+          payment_type: "qris"      // Sesuai contoh dokumentasi
         })
       });
     } catch (fetchError) {
@@ -155,14 +156,14 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    // Mapping sesuai struktur response API MyQris
+    // Mapping response MyQris
     const paymentData = result.deposit;
     const rawQrImage = paymentData.qris_url || ""; 
     const qrisString = paymentData.qr_string || "";
     
-    // ================= ID TRANSAKSI DIAMBIL OTOMATIS DARI RESPONSE API =================
+    // ID transaksi otomatis dari API
     const providerPaymentId = paymentData.deposit_id || paymentData.trx_id;
-    const localTrxId = providerPaymentId; // Diambil otomatis dari API MyQris (misal: "D001")[span_2](start_span)[span_2](end_span)
+    const localTrxId = providerPaymentId; 
     
     const rawCreatedAt = paymentData.created_at;
     const providerCreatedAt = rawCreatedAt 
@@ -239,7 +240,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       }
     });
 
-    // ================= BACKGROUND POLLING MYQRIS =================
+    // ================= BACKGROUND POLLING MYQRIS (Sesuai CURL Status) =================
     const intervalId = setInterval(async () => {
       try {
         const latestHistory = await User.findOne(
@@ -265,7 +266,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
             "User-Agent": "Mozilla/5.0" 
           },
           body: JSON.stringify({
-            deposit_id: localTrxId
+            id: localTrxId // Sesuai dokumentasi curl: parameter 'id' untuk cek status
           })
         });
 
@@ -346,14 +347,11 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     if (!res.headersSent) {
       return res.status(500).json({
         success: false,
-        message: err.message
+    message: err.message
       });
     }
   }
 });
-
-
-
 
 // ================= CEK STATUS DEPOSIT =================
 router.post("/deposit/status", requireLogin, async (req, res) => {
