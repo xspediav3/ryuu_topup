@@ -48,7 +48,7 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
     // Metode QRIS
     const metodeFormatted = [
       {
-        metode: "QRIS",
+        metode: "qris",
         type: "ewallet",
         name: "QRIS All Payment (Otomatis)",
         min: 100,
