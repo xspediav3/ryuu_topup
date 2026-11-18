@@ -88,7 +88,6 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    // Diubah menjadi minimal Rp100 sesuai pesan error pada tampilan
     if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 100) {
       return res.status(400).json({
         success: false,
@@ -160,7 +159,10 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     const paymentData = result.deposit;
     const rawQrImage = paymentData.qris_url || ""; 
     const qrisString = paymentData.qr_string || "";
+    
+    // ================= ID TRANSAKSI DIAMBIL OTOMATIS DARI RESPONSE API =================
     const providerPaymentId = paymentData.deposit_id || paymentData.trx_id;
+    const localTrxId = providerPaymentId; // Diambil otomatis dari API MyQris (misal: "D001")[span_2](start_span)[span_2](end_span)
     
     const rawCreatedAt = paymentData.created_at;
     const providerCreatedAt = rawCreatedAt 
@@ -179,10 +181,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    // ================= ID TRANSAKSI MURNI DARI PAYMENT ID =================
-    const localTrxId = providerPaymentId; 
-    
-    // Background URL baru sesuai permintaan Anda
+    // Background URL baru sesuai permintaan
     const customBgUrl = "https://files.catbox.moe/mbhgwo.png";
 
     // ================= SIMPAN HISTORY =================
@@ -352,6 +351,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     }
   }
 });
+
 
 
 
