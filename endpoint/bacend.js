@@ -110,7 +110,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     const totalBayar = parsedNominal + kodeUnik;
     const saldoDiterima = parsedNominal;
 
-    // ================= CREATE MYQRIS (Sesuai Dokumentasi CURL) =================
+    // ================= CREATE MYQRIS =================
     const createUrl = `${MYQRIS_BASE}/api/deposit/create`;
 
     let response;
@@ -124,8 +124,8 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
           "User-Agent": "Mozilla/5.0"
         },
         body: JSON.stringify({
-          amount: totalBayar,       // MyQris menggunakan 'amount'
-          payment_type: "qris"      // Sesuai contoh dokumentasi
+          amount: totalBayar,
+          payment_type: "qris"
         })
       });
     } catch (fetchError) {
@@ -142,10 +142,10 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     try {
       result = JSON.parse(responseText);
     } catch (jsonError) {
-      console.error("MyQris Create Invalid Response:", responseText.slice(0, 500));
+      console.error("MyQris Create Invalid Response (Bukan JSON):", responseText.slice(0, 500));
       return res.status(502).json({
         success: false,
-        message: "MyQris mengembalikan response yang bukan JSON."
+        message: "Server MyQris mengembalikan HTML/Error (Kemungkinan salah URL Endpoint atau API Key)."
       });
     }
 
@@ -156,13 +156,13 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       });
     }
 
-    // Mapping response MyQris
+    // Mapping sesuai dokumentasi asli MyQris (/api/deposit/create)
     const paymentData = result.deposit;
-    const rawQrImage = paymentData.qris_url || ""; 
+    const rawQrImage = paymentData.qris_url || paymentData.qris_code_url || ""; 
     const qrisString = paymentData.qr_string || "";
     
-    // ID transaksi otomatis dari API
-    const providerPaymentId = paymentData.deposit_id || paymentData.trx_id;
+    // ID Transaksi murni dari MyQris (berdasarkan dokumentasi menggunakan field 'id')
+    const providerPaymentId = paymentData.id || paymentData.deposit_id || paymentData.trx_id;
     const localTrxId = providerPaymentId; 
     
     const rawCreatedAt = paymentData.created_at;
@@ -178,11 +178,11 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     if (!rawQrImage || !qrisString || !providerPaymentId) {
       return res.status(502).json({
         success: false,
-        message: "MyQris tidak mengembalikan QRIS / deposit_id lengkap."
+        message: "MyQris tidak mengembalikan QRIS / ID lengkap."
       });
     }
 
-    // Background URL baru sesuai permintaan
+    // Background URL sesuai permintaan terbaru Anda
     const customBgUrl = "https://files.catbox.moe/mbhgwo.png";
 
     // ================= SIMPAN HISTORY =================
@@ -240,7 +240,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       }
     });
 
-    // ================= BACKGROUND POLLING MYQRIS (Sesuai CURL Status) =================
+    // ================= BACKGROUND POLLING MYQRIS =================
     const intervalId = setInterval(async () => {
       try {
         const latestHistory = await User.findOne(
@@ -266,7 +266,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
             "User-Agent": "Mozilla/5.0" 
           },
           body: JSON.stringify({
-            id: localTrxId // Sesuai dokumentasi curl: parameter 'id' untuk cek status
+            id: localTrxId // Sesuai dokumentasi: parameter 'id'
           })
         });
 
@@ -296,7 +296,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
             {
               $set: {
                 "historyDeposit.$.status": "success",
-                "historyDeposit.$.provider_id": String(providerTrx.deposit_id || localTrxId),
+                "historyDeposit.$.provider_id": String(providerTrx.id || localTrxId),
                 "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || localTrxId),
                 "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
                 "historyDeposit.$.provider_status": providerStatus,
@@ -347,7 +347,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
     if (!res.headersSent) {
       return res.status(500).json({
         success: false,
-    message: err.message
+        message: err.message
       });
     }
   }
