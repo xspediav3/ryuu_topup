@@ -136,10 +136,10 @@ async function createQrisComposite({
       background: "#FFFFFF",
     })
     .extend({
-      top: 55,
-      bottom: 55,
-      left: 55,
-      right: 55,
+      top: 77,
+      bottom: 77,
+      left: 77,
+      right: 77,
       background: "#FFFFFF",
     })
     .png()
