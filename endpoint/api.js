@@ -153,7 +153,7 @@ async function createQrisComposite({
   // Posisi di tengah bagian bawah, seluruh QR harus tetap terlihat.
   const left = Math.max(
     0,
-    Math.floor((width - qrWidth) / 2)
+    Math.floor((width - qrWidth) / 4)
   );
 
   const top = Math.max(
