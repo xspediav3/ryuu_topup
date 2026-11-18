@@ -74,7 +74,48 @@ router.post("/deposit/metode", requireLogin, async (req, res) => {
     });
   }
 });
-// ================= BUAT TRANSAKSI DEPOSIT =================
+
+const BACKGROUND_URL = "https://files.catbox.moe/mbhgwo.png";
+
+// ================= FUNGSI KODE UNIK BERTINGKAT =================
+function generateUniqueCode(amount) {
+  const parsed = parseInt(amount, 10);
+  if (parsed >= 1 && parsed <= 999) {
+    return Math.floor(Math.random() * 200) + 1; // Rp1 - Rp200
+  } else if (parsed >= 1000 && parsed <= 10000) {
+    return Math.floor(Math.random() * 301) + 200; // Rp200 - Rp500
+  } else if (parsed > 10000 && parsed <= 100000) {
+    return Math.floor(Math.random() * 1001) + 500; // Rp500 - Rp1500
+  }
+  return Math.floor(Math.random() * 100) + 1;
+}
+
+// ================= MENGGABUNGKAN QRIS DENGAN BACKGROUND KUSTOM =================
+async function generateCustomQrisImage(qrisImageUrl) {
+  try {
+    const [bgImage, qrisImage] = await Promise.all([
+      loadImage(BACKGROUND_URL),
+      loadImage(qrisImageUrl)
+    ]);
+
+    const canvas = createCanvas(bgImage.width, bgImage.height);
+    const ctx = canvas.getContext('2d');
+
+    ctx.drawImage(bgImage, 0, 0, bgImage.width, bgImage.height);
+
+    const qrisSize = 550;
+    const xPos = (bgImage.width - qrisSize) / 2;
+    const yPos = 575;
+
+    ctx.drawImage(qrisImage, xPos, yPos, qrisSize, qrisSize);
+
+    return canvas.toBuffer('image/png');
+  } catch (error) {
+    console.error('Gagal menggabungkan QRIS dengan background:', error.message);
+    return null;
+  }
+}
+
 router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
     const user = await User.findById(req.session.userId);
@@ -97,8 +138,8 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
 
     const XS_BASE = process.env.XS_PEDIA_BASE_URL || "https://xspedia-payment.vercel.app";
 
-    // ================= KODE UNIK =================
-    const kodeUnik = Math.floor(Math.random() * 250) + 1; // Nilai Rp1 - Rp250
+    // ================= KODE UNIK BERTINGKAT =================
+    const kodeUnik = generateUniqueCode(parsedNominal);
     const totalBayar = parsedNominal + kodeUnik;
     const saldoDiterima = parsedNominal;
 
@@ -172,7 +213,18 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
 
     // ================= ID TRANSAKSI MURNI DARI PAYMENT ID =================
     const localTrxId = providerPaymentId; // e.g. "xiao-api-483921"
-    const customBgUrl = "https://files.catbox.moe/sh2bcj.png";
+    const customBgUrl = BACKGROUND_URL;
+
+    // ================= GENERATE BACKGROUND KUSTOM (CANVAS) =================
+    let finalQrImage = rawQrImage;
+    try {
+      const customBuffer = await generateCustomQrisImage(rawQrImage);
+      if (customBuffer) {
+        finalQrImage = `data:image/png;base64,${customBuffer.toString('base64')}`;
+      }
+    } catch (canvasErr) {
+      console.error("Canvas Generation Warning:", canvasErr.message);
+    }
 
     // ================= SIMPAN HISTORY =================
     const historyDataForDb = {
@@ -198,7 +250,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
       qris_string: qrisString,
       metode: "QRIS",
       status: "pending",
-      qr_image: rawQrImage,
+      qr_image: finalQrImage,
       bg_image: customBgUrl,
       created_at: new Date()
     };
@@ -220,7 +272,7 @@ router.post("/deposit/create", requireLogin, async (req, res) => {
         fee_provider: 0,    
         total_amount: totalBayar,    
         get_balance: saldoDiterima,    
-        qr_image: rawQrImage,    
+        qr_image: finalQrImage,    
         qris_string: qrisString,    
         bg_image: customBgUrl,    
         status: paymentData.status || "pending",
@@ -403,7 +455,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
           status: localStatus,
           metode: localData.metode || "QRIS",
           qr_image: localData.qr_image || null,
-          bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+          bg_image: localData.bg_image || BACKGROUND_URL,
           qris_string: localData.qris_string || "",
           created_at: localData.created_at || null,
           expires_at: localData.provider_expires_at || null,
@@ -570,7 +622,7 @@ router.post("/deposit/status", requireLogin, async (req, res) => {
         status: localStatus,
         metode: localData.metode || "QRIS",
         qr_image: localData.qr_image || null,
-        bg_image: localData.bg_image || "https://files.catbox.moe/sh2bcj.png",
+        bg_image: localData.bg_image || BACKGROUND_URL,
         qris_string: localData.qris_string || "",
         created_at: localData.created_at || null,
         expires_at: localData.provider_expires_at || null,
@@ -635,8 +687,6 @@ router.post("/deposit/cancel", requireLogin, async (req, res) => {
     return res.status(500).json({ success: false, message: "Terjadi kesalahan: " + error.message });
   }
 });
-
-
 
 // Middleware validasi API Key langsung dengan string "free"
 const verifyApiKey = (req, res, next) => {
