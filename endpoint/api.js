@@ -120,7 +120,7 @@ async function createQrisComposite({
   // QR dibuat cukup besar agar mudah dideteksi kamera.
   const qrSize = Math.min(
     500,
-    Math.floor(width * 1.55),
+    Math.floor(width * 0.95),
     Math.floor(height * 0.20)
   );
 
@@ -353,112 +353,124 @@ async function settleDeposit(userId, trxId, status, balance = 0) {
 }
 
 
-// ================= CREATE DEPOSIT MYQRIS (API ROUTE) =================
-router.get("/deposit/create", validateApiKey, async (req, res) => {
-  const { user } = req;
-  const { nominal } = req.query;
 
-  if (!nominal || isNaN(nominal)) return res.status(400).json({ success: false, message: "Nominal tidak valid." });
-
-  const parsedNominal = parseInt(nominal, 10);
-
-  if (!Number.isInteger(parsedNominal) || parsedNominal < 100)
-    return res.status(400).json({ success: false, message: "Minimal deposit Rp100" });
-
-  if (!user?._id) return res.status(401).json({ success: false, message: "User API tidak valid." });
-
-  const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
-  const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
-
-  if (!MYQRIS_API_KEY) {
-    return res.status(500).json({
-      success: false,
-      message: "API Key MyQris belum dikonfigurasi di server."
-    });
-  }
-
+// ================= BUAT TRANSAKSI DEPOSIT (MYQRIS + COMPOSITE QR) =================
+router.post("/deposit/create", requireLogin, async (req, res) => {
   try {
+    const user = await User.findById(req.session.userId);
+    const { nominal } = req.body;
+    const parsedNominal = parseInt(nominal, 10);
+
+    if (!user) {
+      return res.status(401).json({
+        success: false,
+        message: "Sesi tidak valid."
+      });
+    }
+
+    if (!nominal || !Number.isFinite(parsedNominal) || parsedNominal < 100) {
+      return res.status(400).json({
+        success: false,
+        message: "Minimal deposit Rp100"
+      });
+    }
+
+    const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+    const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+    if (!MYQRIS_API_KEY) {
+      return res.status(500).json({
+        success: false,
+        message: "API Key MyQris belum dikonfigurasi di server."
+      });
+    }
+
     // ================= KODE UNIK =================
-    // Hanya Rp1 - Rp250
-    const kodeUnik = Math.floor(Math.random() * 250) + 1;
+    const kodeUnik = Math.floor(Math.random() * 250) + 1; // Nilai Rp1 - Rp250
+    const totalBayar = parsedNominal + kodeUnik;
+    const saldoDiterima = parsedNominal;
 
-    // Total pembayaran = nominal + kode unik
-    const providerAmount = parsedNominal + kodeUnik;
-
+    // ================= CREATE MYQRIS =================
     const createUrl = `${MYQRIS_BASE}/api/deposit/create`;
 
-    let createRes;
-
+    let response;
     try {
-      createRes = await fetch(createUrl, {
+      response = await fetch(createUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Accept: "application/json",
+          "Accept": "application/json",
           "x-api-key": MYQRIS_API_KEY,
           "User-Agent": "Mozilla/5.0"
         },
         body: JSON.stringify({
-          amount: providerAmount,
+          amount: totalBayar,
           payment_type: "qris"
         })
       });
-    } catch (e) {
-      console.error("MyQris Payment Create Fetch Error:", e);
+    } catch (fetchError) {
+      console.error("MyQris Create Fetch Error:", fetchError);
       return res.status(502).json({
         success: false,
-        message: "Koneksi ke MyQris gagal."
+        message: "Koneksi server ke MyQris gagal."
       });
     }
 
-    const createText = await createRes.text();
+    const responseText = await response.text();
     let result;
 
     try {
-      result = JSON.parse(createText);
-    } catch (e) {
-      console.error("MyQris Payment Create Invalid JSON:", createText.slice(0, 500));
+      result = JSON.parse(responseText);
+    } catch (jsonError) {
+      console.error("MyQris Create Invalid Response (Bukan JSON):", responseText.slice(0, 500));
       return res.status(502).json({
         success: false,
-        message: "Response MyQris bukan JSON."
+        message: "Server MyQris mengembalikan HTML/Error (Kemungkinan salah URL Endpoint atau API Key)."
       });
     }
 
-    if (!createRes.ok || !result?.success || !result?.deposit) {
-      return res.status(502).json({
+    if (!response.ok || !result?.success || !result?.deposit) {
+      return res.status(400).json({
         success: false,
         message: result?.message || result?.error || "Gagal membuat QRIS MyQris."
       });
     }
 
-    // Ambil data dari response API MyQris
+    // Mapping sesuai dokumentasi asli MyQris (/api/deposit/create)
     const paymentData = result.deposit;
-    const trxId = paymentData.id || paymentData.deposit_id || paymentData.trx_id; // ID transaksi otomatis dari API provider
-    const rawQrImage = paymentData.qris_url || "";
+    const rawQrImage = paymentData.qris_url || paymentData.qris_code_url || ""; 
     const qrisString = paymentData.qr_string || "";
+    
+    // ID Transaksi murni dari MyQris
+    const providerPaymentId = paymentData.id || paymentData.deposit_id || paymentData.trx_id;
+    const localTrxId = providerPaymentId; 
+    
+    const rawCreatedAt = paymentData.created_at;
+    const providerCreatedAt = rawCreatedAt 
+      ? new Date(typeof rawCreatedAt === 'number' ? rawCreatedAt : rawCreatedAt).toISOString() 
+      : new Date().toISOString();
 
-    if (!trxId || !rawQrImage || !qrisString) {
+    const rawExpiresAt = paymentData.expired_at;
+    const providerExpiresAt = rawExpiresAt
+      ? new Date(typeof rawExpiresAt === 'number' ? rawExpiresAt : rawExpiresAt).toISOString()
+      : null;
+
+    if (!rawQrImage || !qrisString || !providerPaymentId) {
       return res.status(502).json({
         success: false,
-        message: "Response QRIS dari MyQris tidak lengkap."
+        message: "MyQris tidak mengembalikan QRIS / ID lengkap."
       });
     }
 
-    const createdAt = paymentData.created_at ? new Date(paymentData.created_at) : new Date();
-    const nominalAsli = parsedNominal;
+    // Background URL sesuai permintaan
+    const customBgUrl = "https://files.catbox.moe/mbhgwo.png";
 
-    const feeProvider = paymentData.fee_amount || 0;
-    const totalBayar = paymentData.total_payment || providerAmount;
-    const totalFee = paymentData.fee || kodeUnik;
-    const finalBalance = nominalAsli;
-    const bgUrl = "https://files.catbox.moe/ix1tqb.png";
-
-    // ================= BACKGROUND / COMPOSITE =================
+    // ================= BACKGROUND / COMPOSITE QR =================
     let compositeQrUrl = rawQrImage;
 
     try {
       const generated = await createQrisComposite({
-        trxId,
+        trxId: localTrxId,
         qrisImageUrl: rawQrImage,
         qrisString
       });
@@ -469,195 +481,159 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
       console.error("QR Composite Error:", e.message);
     }
 
-    // ================= HISTORY =================
-    const history = {
-      id: trxId,
-      reference_id: trxId,
-      nominal: nominalAsli,
-
-      // Kode unik
+    // ================= SIMPAN HISTORY =================
+    const historyDataForDb = {
+      id: localTrxId,
+      reff_id: localTrxId,
+      nominal: parsedNominal,
       tambahan: kodeUnik,
       kode_unik: kodeUnik,
-
-      // Ditampilkan sebagai Biaya Admin
-      fee: totalFee,
+      fee: paymentData.fee || 0,
       fee_env: kodeUnik,
-      fee_provider: feeProvider,
-
-      total_amount: totalBayar,
-      get_balance: finalBalance,
-
-      provider_amount: providerAmount,
+      fee_provider: paymentData.fee_amount || 0,
+      total_amount: paymentData.total_payment || totalBayar,
+      get_balance: saldoDiterima,
+      provider_amount: paymentData.amount || totalBayar,
       provider: "myqris",
-      provider_id: trxId,
-      provider_reference_id: trxId,
+      provider_id: providerPaymentId,
+      provider_reference_id: providerPaymentId,
+      provider_created_at: providerCreatedAt,
+      provider_expires_at: providerExpiresAt,
+      expires_in_ms: 15 * 60 * 1000, 
       provider_status: paymentData.status || "pending",
       provider_time: null,
-
+      qris_string: qrisString,
       metode: "QRIS",
       status: "pending",
-
       qr_image: compositeQrUrl,
       qr_image_raw: rawQrImage,
-      qris_string: qrisString,
-      bg_image: bgUrl,
-      created_at: createdAt
+      bg_image: customBgUrl,
+      created_at: new Date()
     };
 
-    await tambahHistoryDeposit(user._id, history);
+    await tambahHistoryDeposit(user._id, historyDataForDb);
 
     res.status(200).json({
       success: true,
-      message: "QRIS berhasil dibuat.",
       data: {
-        id: trxId,
-        trx_id: trxId,
-        reference_id: trxId,
+        id: localTrxId,
+        trx_id: localTrxId,
+        reff_id: localTrxId,
         metode: "QRIS",
-
-        nominal: nominalAsli,
-
-        // Kode unik / biaya admin
-        kode_unik: kodeUnik,
-        tambahan: kodeUnik,
-        fee: totalFee,
-        fee_env: kodeUnik,
-        fee_provider: feeProvider,
-
-        total_amount: totalBayar,
-        get_balance: finalBalance,
-
+        nominal: parsedNominal,
+        kode_unik: kodeUnik,    
+        tambahan: kodeUnik,    
+        fee: paymentData.fee || 0,    
+        fee_env: kodeUnik,    
+        fee_provider: paymentData.fee_amount || 0,    
+        total_amount: paymentData.total_payment || totalBayar,    
+        get_balance: saldoDiterima,    
         qr_image: compositeQrUrl,
         qr_image_combined: compositeQrUrl,
         qr_image_raw: rawQrImage,
-        qris_string: qrisString,
-        bg_image: bgUrl,
-        status: "pending",
-        created_at: createdAt
+        qris_string: qrisString,    
+        bg_image: customBgUrl,    
+        status: paymentData.status || "pending",
+        expires_at: providerExpiresAt,
+        expires_in_ms: 15 * 60 * 1000
       }
     });
 
-    // ================= POLLING OTOMATIS =================
+    // ================= BACKGROUND POLLING MYQRIS =================
     const intervalId = setInterval(async () => {
       try {
-        const h = await User.findOne(
-          {
-            _id: user._id,
-            "historyDeposit.id": trxId
-          },
-          {
-            "historyDeposit.$": 1
-          }
+        const latestHistory = await User.findOne(
+          { _id: user._id, "historyDeposit.id": localTrxId },
+          { "historyDeposit.$": 1 }
         );
 
-        const dep = h?.historyDeposit?.[0];
-        const localStatus = String(dep?.status || "").toLowerCase();
+        const latestDeposit = latestHistory?.historyDeposit?.[0];
+        const localStatus = String(latestDeposit?.status || "").toLowerCase();
 
-        if (!dep || !["pending", "processing"].includes(localStatus)) {
+        if (!latestDeposit || !["pending", "processing"].includes(localStatus)) {
           clearInterval(intervalId);
           return;
         }
 
-        // Cek status via API MyQris (POST /api/deposit/status)
-        const checkUrl = `${MYQRIS_BASE}/api/deposit/status`;
-
-        const checkRes = await fetch(checkUrl, {
+        const detailUrl = `${MYQRIS_BASE}/api/deposit/status`;
+        const checkRes = await fetch(detailUrl, {
           method: "POST",
-          headers: {
+          headers: { 
             "Content-Type": "application/json",
-            Accept: "application/json",
+            "Accept": "application/json", 
             "x-api-key": MYQRIS_API_KEY,
-            "User-Agent": "Mozilla/5.0"
+            "User-Agent": "Mozilla/5.0" 
           },
-          body: JSON.stringify({ id: trxId })
+          body: JSON.stringify({
+            id: localTrxId
+          })
         });
 
         if (!checkRes.ok) return;
 
-        const checkText = await checkRes.text();
-        let checkData;
+        const checkData = await checkRes.json();
+        const providerTrx = checkData?.deposit || checkData; 
+        if (!providerTrx || !providerTrx.status) return;
 
-        try {
-          checkData = JSON.parse(checkText);
-        } catch (e) {
-          console.error("MyQris Polling Invalid JSON:", checkText.slice(0, 300));
-          return;
-        }
+        const rawProviderStatus = String(providerTrx.status || "").toLowerCase();
+        const providerStatus = (rawProviderStatus === "paid" || rawProviderStatus === "success" || rawProviderStatus === "settlement") ? "success" : rawProviderStatus;
 
-        const providerTrx = checkData?.deposit || checkData;
-        if (!providerTrx || !providerTrx.status) {
-          return;
-        }
+        if (providerStatus === "success") {
+          let pTime = providerTrx.settlement_time || providerTrx.created_at || null;
+          if (typeof pTime === 'number') {
+            pTime = new Date(pTime).toISOString();
+          }
 
-        const apiStatus = String(providerTrx.status || "").toLowerCase();
-
-        // ================= SUCCESS / PAID =================
-        if (["success", "paid", "settlement"].includes(apiStatus)) {
           const updateResult = await User.updateOne(
             {
               _id: user._id,
               historyDeposit: {
                 $elemMatch: {
-                  id: trxId,
-                  status: {
-                    $in: ["pending", "processing"]
-                  }
+                  id: localTrxId,
+                  status: { $in: ["pending", "processing"] }
                 }
               }
             },
             {
               $set: {
                 "historyDeposit.$.status": "success",
-                "historyDeposit.$.provider_id": String(providerTrx.id || trxId),
-                "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || providerTrx.id || trxId),
-                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || providerAmount,
-                "historyDeposit.$.provider_status": "success",
-                "historyDeposit.$.provider_time": providerTrx.settlement_time || providerTrx.created_at || null
+                "historyDeposit.$.provider_id": String(providerTrx.id || localTrxId),
+                "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || localTrxId),
+                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || 0,
+                "historyDeposit.$.provider_status": providerStatus,
+                "historyDeposit.$.provider_time": pTime
               },
               $inc: {
-                saldo: finalBalance
+                saldo: Number(latestDeposit.get_balance) || 0
               }
             }
           );
 
           if (updateResult.modifiedCount > 0) {
-            console.log(`Deposit SUCCESS ${trxId}`);
+            console.log(`Deposit SUCCESS ${localTrxId}`);
           }
-
           clearInterval(intervalId);
           return;
         }
 
-        // ================= FAILED / EXPIRED / CANCEL =================
-        if (["failed", "expired", "cancel", "cancelled"].includes(apiStatus)) {
-          const updateResult = await User.updateOne(
+        if (["failed", "expired", "cancel", "cancelled"].includes(providerStatus)) {
+          await User.updateOne(
             {
               _id: user._id,
               historyDeposit: {
                 $elemMatch: {
-                  id: trxId,
-                  status: {
-                    $in: ["pending", "processing"]
-                  }
+                  id: localTrxId,
+                  status: { $in: ["pending", "processing"] }
                 }
               }
             },
             {
               $set: {
-                "historyDeposit.$.status": apiStatus,
-                "historyDeposit.$.provider_id": String(providerTrx.id || trxId),
-                "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || providerTrx.id || trxId),
-                "historyDeposit.$.provider_amount": Number(providerTrx.amount) || providerAmount,
-                "historyDeposit.$.provider_status": apiStatus,
-                "historyDeposit.$.provider_time": providerTrx.created_at || null
+                "historyDeposit.$.status": providerStatus,
+                "historyDeposit.$.provider_status": providerStatus
               }
             }
           );
-
-          if (updateResult.modifiedCount > 0) {
-            console.log(`Deposit ${apiStatus.toUpperCase()} ${trxId}`);
-          }
-
           clearInterval(intervalId);
         }
       } catch (e) {
@@ -665,23 +641,18 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
       }
     }, 10000);
 
-    // Maksimal polling 30 menit
-    setTimeout(
-      () => clearInterval(intervalId),
-      30 * 60 * 1000
-    );
+    setTimeout(() => clearInterval(intervalId), 15 * 60 * 1000 + 60000);
 
-  } catch (error) {
-    console.error("MyQris Deposit Create Error:", error);
-
-    return res.status(500).json({
-      success: false,
-      message: error.message
-    });
+  } catch (err) {
+    console.error("Deposit Create Error:", err);
+    if (!res.headersSent) {
+      return res.status(500).json({
+        success: false,
+        message: err.message
+      });
+    }
   }
 });
-
-
 
 // ================= CEK STATUS DEPOSIT MYQRIS (API ROUTE) =================
 router.get("/deposit/status", validateApiKey, async (req, res) => {
