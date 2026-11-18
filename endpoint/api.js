@@ -33,7 +33,7 @@ const cloudscraperHeaders = {
 // HELPER QRIS COMPOSITE (BACKGROUND + QR)
 // ==========================================
 const QR_OUTPUT_DIR = path.join(__dirname, "../media/generated-qris");
-const DEFAULT_BG_URL = "https://files.catbox.moe/43lq1g.png";
+const DEFAULT_BG_URL = "https://files.catbox.moe/ix1tqb.png";
 const DEFAULT_BG_PATH = path.join(__dirname, "../media/bg.jpg");
 
 function getFeePercentForRole(role) {
@@ -273,7 +273,7 @@ router.get("/deposit/metode", validateApiKey, async (req, res) => {
       metode: "QRIS",
       type: "ewallet",
       name: "QRIS All Payment (Otomatis)",
-      min: 10,
+      min: 100,
       max: 5000000,
       fee: 0,
       fee_persen: feePersen,
@@ -353,7 +353,7 @@ async function settleDeposit(userId, trxId, status, balance = 0) {
 }
 
 
-// ================= CREATE DEPOSIT RESTII GOPAY =================
+// ================= CREATE DEPOSIT MYQRIS (API ROUTE) =================
 router.get("/deposit/create", validateApiKey, async (req, res) => {
   const { user } = req;
   const { nominal } = req.query;
@@ -362,10 +362,20 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
 
   const parsedNominal = parseInt(nominal, 10);
 
-  if (!Number.isInteger(parsedNominal) || parsedNominal < 10)
-    return res.status(400).json({ success: false, message: "Minimal deposit Rp10" });
+  if (!Number.isInteger(parsedNominal) || parsedNominal < 100)
+    return res.status(400).json({ success: false, message: "Minimal deposit Rp100" });
 
   if (!user?._id) return res.status(401).json({ success: false, message: "User API tidak valid." });
+
+  const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+  const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+  if (!MYQRIS_API_KEY) {
+    return res.status(500).json({
+      success: false,
+      message: "API Key MyQris belum dikonfigurasi di server."
+    });
+  }
 
   try {
     // ================= KODE UNIK =================
@@ -375,70 +385,73 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
     // Total pembayaran = nominal + kode unik
     const providerAmount = parsedNominal + kodeUnik;
 
-    const createUrl = `https://restii.vercel.app/gopay/createpayment?apikey=RyuuXiao&amount=${encodeURIComponent(providerAmount)}`;
+    const createUrl = `${MYQRIS_BASE}/api/deposit/create`;
 
     let createRes;
 
     try {
       createRes = await fetch(createUrl, {
-        method: "GET",
+        method: "POST",
         headers: {
+          "Content-Type": "application/json",
           Accept: "application/json",
+          "x-api-key": MYQRIS_API_KEY,
           "User-Agent": "Mozilla/5.0"
-        }
+        },
+        body: JSON.stringify({
+          amount: providerAmount,
+          payment_type: "qris"
+        })
       });
     } catch (e) {
-      console.error("Restii Payment Create Fetch Error:", e);
+      console.error("MyQris Payment Create Fetch Error:", e);
       return res.status(502).json({
         success: false,
-        message: "Koneksi ke Provider Payment gagal."
+        message: "Koneksi ke MyQris gagal."
       });
     }
 
     const createText = await createRes.text();
-
     let result;
 
     try {
       result = JSON.parse(createText);
     } catch (e) {
-      console.error("Restii Payment Create Invalid JSON:", createText.slice(0, 500));
+      console.error("MyQris Payment Create Invalid JSON:", createText.slice(0, 500));
       return res.status(502).json({
         success: false,
-        message: "Response Provider Payment bukan JSON."
+        message: "Response MyQris bukan JSON."
       });
     }
 
-    if (!createRes.ok || !result?.success) {
+    if (!createRes.ok || !result?.success || !result?.deposit) {
       return res.status(502).json({
         success: false,
-        message: result?.message || "Gagal membuat QRIS."
+        message: result?.message || result?.error || "Gagal membuat QRIS MyQris."
       });
     }
 
-    // Ambil data dari response API Restii
-    const paymentData = result.data || {};
-    const trxId = paymentData.paymentId; // ID transaksi otomatis dari API provider (e.g. xiao-api-XXXXXX)
-    const rawQrImage = paymentData.qrUrl || "";
-    const qrisString = paymentData.qrisString || "";
+    // Ambil data dari response API MyQris
+    const paymentData = result.deposit;
+    const trxId = paymentData.id || paymentData.deposit_id || paymentData.trx_id; // ID transaksi otomatis dari API provider
+    const rawQrImage = paymentData.qris_url || "";
+    const qrisString = paymentData.qr_string || "";
 
     if (!trxId || !rawQrImage || !qrisString) {
       return res.status(502).json({
         success: false,
-        message: "Response QRIS dari provider tidak lengkap."
+        message: "Response QRIS dari MyQris tidak lengkap."
       });
     }
 
-    const createdAt = paymentData.createdAt ? new Date(paymentData.createdAt) : new Date();
+    const createdAt = paymentData.created_at ? new Date(paymentData.created_at) : new Date();
     const nominalAsli = parsedNominal;
 
-    // Kode unik dianggap sebagai Biaya Admin
-    const feeProvider = 0;
-    const additionalFee = kodeUnik;
-    const totalBayar = providerAmount;
-    const totalFee = kodeUnik;
+    const feeProvider = paymentData.fee_amount || 0;
+    const totalBayar = paymentData.total_payment || providerAmount;
+    const totalFee = paymentData.fee || kodeUnik;
     const finalBalance = nominalAsli;
-    const bgUrl = DEFAULT_BG_URL;
+    const bgUrl = "https://files.catbox.moe/ix1tqb.png";
 
     // ================= BACKGROUND / COMPOSITE =================
     let compositeQrUrl = rawQrImage;
@@ -475,7 +488,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
       get_balance: finalBalance,
 
       provider_amount: providerAmount,
-      provider: "restii-gopay",
+      provider: "myqris",
       provider_id: trxId,
       provider_reference_id: trxId,
       provider_status: paymentData.status || "pending",
@@ -545,39 +558,41 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
           return;
         }
 
-        // Cek status via API Restii
-        const checkUrl = `https://restii.vercel.app/gopay/checkstatus?apikey=RyuuXiao&paymentId=${encodeURIComponent(trxId)}`;
+        // Cek status via API MyQris (POST /api/deposit/status)
+        const checkUrl = `${MYQRIS_BASE}/api/deposit/status`;
 
         const checkRes = await fetch(checkUrl, {
-          method: "GET",
+          method: "POST",
           headers: {
+            "Content-Type": "application/json",
             Accept: "application/json",
+            "x-api-key": MYQRIS_API_KEY,
             "User-Agent": "Mozilla/5.0"
-          }
+          },
+          body: JSON.stringify({ id: trxId })
         });
 
         if (!checkRes.ok) return;
 
         const checkText = await checkRes.text();
-
         let checkData;
 
         try {
           checkData = JSON.parse(checkText);
         } catch (e) {
-          console.error("Restii Polling Invalid JSON:", checkText.slice(0, 300));
+          console.error("MyQris Polling Invalid JSON:", checkText.slice(0, 300));
           return;
         }
 
-        if (!checkData?.success || !checkData.data) {
+        const providerTrx = checkData?.deposit || checkData;
+        if (!providerTrx || !providerTrx.status) {
           return;
         }
 
-        const providerTrx = checkData.data;
         const apiStatus = String(providerTrx.status || "").toLowerCase();
 
         // ================= SUCCESS / PAID =================
-        if (apiStatus === "success" || apiStatus === "paid" || apiStatus === "settlement") {
+        if (["success", "paid", "settlement"].includes(apiStatus)) {
           const updateResult = await User.updateOne(
             {
               _id: user._id,
@@ -594,10 +609,10 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
               $set: {
                 "historyDeposit.$.status": "success",
                 "historyDeposit.$.provider_id": String(providerTrx.id || trxId),
-                "historyDeposit.$.provider_reference_id": String(providerTrx.transactionid || providerTrx.id || trxId),
+                "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || providerTrx.id || trxId),
                 "historyDeposit.$.provider_amount": Number(providerTrx.amount) || providerAmount,
                 "historyDeposit.$.provider_status": "success",
-                "historyDeposit.$.provider_time": providerTrx.paidAt || providerTrx.createdAt || null
+                "historyDeposit.$.provider_time": providerTrx.settlement_time || providerTrx.created_at || null
               },
               $inc: {
                 saldo: finalBalance
@@ -631,10 +646,10 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
               $set: {
                 "historyDeposit.$.status": apiStatus,
                 "historyDeposit.$.provider_id": String(providerTrx.id || trxId),
-                "historyDeposit.$.provider_reference_id": String(providerTrx.transactionid || providerTrx.id || trxId),
+                "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || providerTrx.id || trxId),
                 "historyDeposit.$.provider_amount": Number(providerTrx.amount) || providerAmount,
                 "historyDeposit.$.provider_status": apiStatus,
-                "historyDeposit.$.provider_time": providerTrx.paidAt || null
+                "historyDeposit.$.provider_time": providerTrx.created_at || null
               }
             }
           );
@@ -646,7 +661,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
           clearInterval(intervalId);
         }
       } catch (e) {
-        console.error("Restii Polling Error:", e.message);
+        console.error("MyQris Polling Error:", e.message);
       }
     }, 10000);
 
@@ -657,7 +672,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
     );
 
   } catch (error) {
-    console.error("Restii Deposit Create Error:", error);
+    console.error("MyQris Deposit Create Error:", error);
 
     return res.status(500).json({
       success: false,
@@ -668,7 +683,7 @@ router.get("/deposit/create", validateApiKey, async (req, res) => {
 
 
 
-// ================= CEK STATUS DEPOSIT RESTII GOPAY =================
+// ================= CEK STATUS DEPOSIT MYQRIS (API ROUTE) =================
 router.get("/deposit/status", validateApiKey, async (req, res) => {
   const { id } = req.query;
   const { user } = req;
@@ -684,6 +699,16 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
     return res.status(401).json({
       success: false,
       message: "User API tidak valid."
+    });
+  }
+
+  const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+  const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+  if (!MYQRIS_API_KEY) {
+    return res.status(500).json({
+      success: false,
+      message: "API Key MyQris belum dikonfigurasi di server."
     });
   }
 
@@ -708,7 +733,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
     let dep = h.historyDeposit[0];
     let status = String(dep.status || "pending").toLowerCase();
 
-    // ================= STATUS TERMINAL (JIKA SUDAH SUCCESS/EXPIRED/FAILED) =================
+    // ================= STATUS TERMINAL =================
     if (!["pending", "processing"].includes(status)) {
       const nominal = Number(dep.nominal) || 0;
       const kodeUnik = Number(dep.kode_unik || dep.tambahan || dep.fee) || 0;
@@ -734,7 +759,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
           qr_image_combined: dep.qr_image || "",
           qr_image_raw: dep.qr_image_raw || "",
           qris_string: dep.qris_string || "",
-          bg_image: dep.bg_image || DEFAULT_BG_URL,
+          bg_image: dep.bg_image || "https://files.catbox.moe/ix1tqb.png",
           created_at: dep.created_at || null,
           provider_id: dep.provider_id || null,
           provider_reference_id: dep.provider_reference_id || null,
@@ -745,21 +770,24 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
       });
     }
 
-    // ================= CHECK STATUS RESTII API =================
-    const checkUrl = `https://restii.vercel.app/gopay/status?apikey=RyuuXiao&paymentId=${encodeURIComponent(id)}`;
+    // ================= CHECK STATUS MYQRIS API =================
+    const checkUrl = `${MYQRIS_BASE}/api/deposit/status`;
 
     const response = await fetch(checkUrl, {
-      method: "GET",
+      method: "POST",
       headers: {
+        "Content-Type": "application/json",
         Accept: "application/json",
+        "x-api-key": MYQRIS_API_KEY,
         "User-Agent": "Mozilla/5.0"
-      }
+      },
+      body: JSON.stringify({ id: id })
     });
 
     if (!response.ok) {
       return res.status(502).json({
         success: false,
-        message: "Gagal mengambil status dari Restii Payment."
+        message: "Gagal mengambil status dari MyQris."
       });
     }
 
@@ -769,25 +797,24 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
     try {
       result = JSON.parse(responseText);
     } catch (e) {
-      console.error("Restii Status Invalid JSON:", responseText.slice(0, 500));
+      console.error("MyQris Status Invalid JSON:", responseText.slice(0, 500));
       return res.status(502).json({
         success: false,
-        message: "Response Restii Payment bukan JSON."
+        message: "Response MyQris bukan JSON."
       });
     }
 
-    if (!result?.success || !result.data) {
+    const providerTrx = result?.deposit || result;
+    if (!providerTrx || !providerTrx.status) {
       return res.status(502).json({
         success: false,
-        message: "Data transaksi tidak ditemukan di Restii Payment."
+        message: "Data transaksi tidak ditemukan di MyQris."
       });
     }
 
-    const providerTrx = result.data;
     const providerStatus = String(providerTrx.status || "").toLowerCase();
 
     // ================= UPDATE STATUS KE DATABASE =================
-    // Jika status "paid", "settlement", atau "success"
     if (["paid", "settlement", "success"].includes(providerStatus)) {
       await User.updateOne(
         {
@@ -805,10 +832,10 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
           $set: {
             "historyDeposit.$.status": "success",
             "historyDeposit.$.provider_id": String(providerTrx.id || id),
-            "historyDeposit.$.provider_reference_id": String(providerTrx.transactionid || providerTrx.id || id),
+            "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || providerTrx.id || id),
             "historyDeposit.$.provider_amount": Number(providerTrx.amount) || Number(dep.provider_amount) || 0,
             "historyDeposit.$.provider_status": "success",
-            "historyDeposit.$.provider_time": providerTrx.paidAt || providerTrx.createdAt || null
+            "historyDeposit.$.provider_time": providerTrx.settlement_time || providerTrx.created_at || null
           },
           $inc: {
             saldo: Number(dep.get_balance) || 0
@@ -818,7 +845,6 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
 
       status = "success";
     } 
-    // Jika status gagal / expired / cancel
     else if (["failed", "expired", "cancel", "cancelled"].includes(providerStatus)) {
       await User.updateOne(
         {
@@ -836,10 +862,10 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
           $set: {
             "historyDeposit.$.status": providerStatus,
             "historyDeposit.$.provider_id": String(providerTrx.id || id),
-            "historyDeposit.$.provider_reference_id": String(providerTrx.transactionid || providerTrx.id || id),
+            "historyDeposit.$.provider_reference_id": String(providerTrx.trx_id || providerTrx.id || id),
             "historyDeposit.$.provider_amount": Number(providerTrx.amount) || Number(dep.provider_amount) || 0,
             "historyDeposit.$.provider_status": providerStatus,
-            "historyDeposit.$.provider_time": providerTrx.paidAt || null
+            "historyDeposit.$.provider_time": providerTrx.created_at || null
           }
         }
       );
@@ -885,7 +911,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
         qr_image_combined: dep.qr_image || "",
         qr_image_raw: dep.qr_image_raw || "",
         qris_string: dep.qris_string || "",
-        bg_image: dep.bg_image || DEFAULT_BG_URL,
+        bg_image: dep.bg_image || "https://files.catbox.moe/ix1tqb.png",
         created_at: dep.created_at || null,
         provider_id: dep.provider_id || null,
         provider_reference_id: dep.provider_reference_id || null,
@@ -896,7 +922,7 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
     });
 
   } catch (error) {
-    console.error("Restii Status Error:", error);
+    console.error("MyQris Status Error:", error);
 
     return res.status(500).json({
       success: false,
@@ -906,22 +932,60 @@ router.get("/deposit/status", validateApiKey, async (req, res) => {
 });
 
 
-// === ROUTE CANCEL (STRUKTUR ASLI - LOCAL ONLY) ===
+// === ROUTE CANCEL MYQRIS (API ROUTE) ===
 router.get("/deposit/cancel", validateApiKey, async (req, res) => {
   const { user } = req;
   const { id } = req.query;
   if (!id) return res.status(400).json({ success: false, message: "ID diperlukan." });
 
+  const MYQRIS_BASE = process.env.MYQRIS_BASE_URL || "https://myqris.biz.id";
+  const MYQRIS_API_KEY = process.env.MYQRIS_API_KEY || "";
+
+  if (!MYQRIS_API_KEY) {
+    return res.status(500).json({
+      success: false,
+      message: "API Key MyQris belum dikonfigurasi di server."
+    });
+  }
+
   try {
     const userHistory = await User.findOne({ _id: user._id, "historyDeposit.id": id });
-    if (!userHistory) return res.status(404).json({ success: false, message: "Data tidak ditemukan." });
+    if (!userHistory || !userHistory.historyDeposit.length) {
+      return res.status(404).json({ success: false, message: "Data tidak ditemukan." });
+    }
 
-    // Update status di database internal saja
-    await editHistoryDeposit(user._id, id, "cancel");
+    const currentData = userHistory.historyDeposit.find(item => item.id === id);
+    if (currentData && currentData.status !== "pending") {
+      return res.status(400).json({
+        success: false,
+        message: `Transaksi tidak bisa dibatalkan karena status sudah ${currentData.status}.`
+      });
+    }
+
+    const targetPaymentId = currentData?.provider_id || id;
+    const cancelUrl = `${MYQRIS_BASE}/api/cancel`;
+
+    try {
+      await fetch(cancelUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Accept: "application/json",
+          "x-api-key": MYQRIS_API_KEY,
+          "User-Agent": "Mozilla/5.0"
+        },
+        body: JSON.stringify({ trx_id: targetPaymentId })
+      });
+    } catch (e) {
+      console.error("MyQris Cancel API Error:", e.message);
+    }
+
+    // Update status di database internal menjadi cancelled
+    await editHistoryDeposit(user._id, id, "cancelled");
 
     return res.status(200).json({
       success: true,
-      data: { id, status: "cancel" },
+      data: { id, status: "cancelled" },
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
