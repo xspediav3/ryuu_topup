@@ -88,7 +88,7 @@ async function createQrisComposite({
   } else if (qrisString) {
     qrBuffer = await QRCode.toBuffer(qrisString, {
       type: "png",
-      width: 1500,
+      width: 1200,
       margin: 4,
       errorCorrectionLevel: "H",
       color: {
@@ -104,7 +104,7 @@ async function createQrisComposite({
   const baseBuffer = await sharp(backgroundBuffer)
     .rotate()
     .resize({
-      width: 1500,
+      width: 1200,
       fit: "inside",
       withoutEnlargement: false,
     })
@@ -119,9 +119,9 @@ async function createQrisComposite({
 
   // QR dibuat cukup besar agar mudah dideteksi kamera.
   const qrSize = Math.min(
-    2000,
+    900,
     Math.floor(width * 0.70),
-    Math.floor(height * 0.23)
+    Math.floor(height * 0.22)
   );
 
   // jPanel putih + quiet-zone besar.
@@ -147,19 +147,19 @@ async function createQrisComposite({
 
   const qrMeta = await sharp(qrPrepared).metadata();
 
-  const qrWidth = qrMeta.width || qrSize + 250;
-  const qrHeight = qrMeta.height || qrSize + 250;
+  const qrWidth = qrMeta.width || qrSize + 350;
+  const qrHeight = qrMeta.height || qrSize + 350;
 
   // Posisi di tengah bagian bawah, seluruh QR harus tetap terlihat.
   const left = Math.max(
     0,
-    Math.floor((width - qrWidth) / 4)
+    Math.floor((width - qrWidth) / 2)
   );
 
   const top = Math.max(
     0,
     Math.min(
-      height - qrHeight - 20,
+      height - qrHeight - 30,
       Math.floor(height * 0.41)
     )
   );
